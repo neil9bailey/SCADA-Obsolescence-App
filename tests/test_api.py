@@ -194,6 +194,48 @@ IMP-002,Imported RTU,South,3,supported,OBP-T02
     assert "OBP-T02" in exported.text
 
 
+def test_live_obsolescence_register_import_mapping_and_upsert(client):
+    csv_text = """Component Part,Component,Component Description,Manufacturer,Responsible Team,Area,Hardware/Software,Functional / Non-Functional,Obsolete (Y/N),End of Support,Status,System Criticality,Obsolescence Criticality,Cost Criticality,Replacement identified (Y/N),Full upgrade or ad-hoc replacement?,Risk Score,Risk Factor,Reason for Risk
+BIG-AWF-R2800 Reverse Proxy Firewall,Firewall,Reverse Proxy firewall in the DMZ,F5,Network,Network,Software,Functional,Y,01-Jan-25,Live / Current,4,3,2,Y,Full Upgrade,5.00,Critical,End of support date has passed
+BIG-AWF-R2800 Reverse Proxy Firewall,Firewall,Reverse Proxy firewall in the DMZ,F5,Network,Network,Software,Functional,Y,01-Jan-25,Live / Current,4,3,2,Y,Full Upgrade,5.00,Critical,End of support date has passed
+"""
+    response = client.post(
+        "/api/assets/import",
+        files={"file": ("live-register.csv", io.BytesIO(csv_text.encode()), "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["created"] == 2
+    assert result["updated"] == 0
+    assert result["failed"] == 0
+
+    listed = client.get("/api/assets", params={"limit": 10, "sort_by": "asset_code", "sort_dir": "asc"}).json()
+    assert listed["total"] == 2
+    asset_codes = {asset["asset_code"] for asset in listed["items"]}
+    assert len(asset_codes) == 2
+    for asset in listed["items"]:
+        assert asset["asset_code"].startswith("TPCMS-BIG-AWF-R2800-REVERSE-PROXY-FIREWALL-")
+        assert asset["system_name"] == "Firewall"
+        assert asset["site"] == "Network"
+        assert asset["process_area"] == "Network"
+        assert asset["asset_type"] == "Firewall"
+        assert asset["manufacturer"] == "F5"
+        assert asset["model"] == "BIG-AWF-R2800 Reverse Proxy Firewall"
+        assert asset["support_status"] == "end_of_support"
+        assert asset["treatment"] == "replace"
+        assert "Original risk factor: Critical" in asset["notes"]
+
+    repeated = client.post(
+        "/api/assets/import",
+        files={"file": ("live-register.csv", io.BytesIO(csv_text.encode()), "text/csv")},
+    )
+    assert repeated.status_code == 200, repeated.text
+    repeated_result = repeated.json()
+    assert repeated_result["created"] == 0
+    assert repeated_result["updated"] == 2
+    assert repeated_result["failed"] == 0
+
+
 def test_csv_import_rejects_unknown_direct_programme_id(client):
     csv_text = """asset_code,system_name,site,programme_id
 IMP-NO-PROG,Imported orphan,North,999

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 import csv
 import io
 from datetime import date
@@ -16,6 +17,11 @@ from app.db import get_db
 from app.models import Asset, Programme
 from app.schemas import AssetCreate, AssetListResponse, AssetRead, AssetUpdate, ImportResult, Message
 from app.services.audit import log_event
+from app.services.live_register_import import (
+    is_live_register_fieldnames,
+    live_register_natural_key,
+    map_live_register_row,
+)
 from app.services.risk import apply_assessment
 
 router = APIRouter(prefix="/assets", tags=["assets"])
@@ -88,7 +94,7 @@ def _programme_exists(db: Session, programme_id: int | None) -> bool:
     return programme_id is None or db.get(Programme, programme_id) is not None
 
 
-def _normalise_csv_row(raw: dict[str, Any]) -> dict[str, Any]:
+def _normalise_csv_row(raw: dict[str, Any], *, line_number: int, duplicate_index: int = 1) -> dict[str, Any]:
     row: dict[str, Any] = {}
     for key, value in raw.items():
         if key is None:
@@ -99,6 +105,9 @@ def _normalise_csv_row(raw: dict[str, Any]) -> dict[str, Any]:
         if value == "":
             value = None
         row[clean_key] = value
+
+    if "asset_code" not in row and is_live_register_fieldnames(list(row)):
+        row = map_live_register_row(row, line_number=line_number, duplicate_index=duplicate_index)
 
     for field in INTEGER_FIELDS:
         if row.get(field) is not None:
@@ -155,19 +164,32 @@ async def import_assets(file: UploadFile = File(...), db: Session = Depends(get_
         raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from exc
 
     reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames or "asset_code" not in [name.strip().lstrip("\ufeff") for name in reader.fieldnames]:
-        raise HTTPException(status_code=400, detail="CSV must contain an asset_code column")
+    fieldnames = [name.strip().lstrip("\ufeff") for name in reader.fieldnames or []]
+    live_register = is_live_register_fieldnames(fieldnames)
+    if not fieldnames or ("asset_code" not in fieldnames and not live_register):
+        raise HTTPException(
+            status_code=400,
+            detail="CSV must contain an asset_code column or recognised live obsolescence register columns",
+        )
 
     created = updated = failed = rows_received = 0
     errors: list[str] = []
     create_fields = set(AssetCreate.model_fields)
     update_fields = set(AssetUpdate.model_fields)
+    duplicate_indexes: defaultdict[tuple[str, ...], int] = defaultdict(int)
 
     for line_number, raw in enumerate(reader, start=2):
         rows_received += 1
         try:
             with db.begin_nested():
-                row = _normalise_csv_row(raw)
+                duplicate_index = 1
+                if live_register:
+                    cleaned_raw = {key.strip().lstrip("\ufeff"): value for key, value in raw.items() if key is not None}
+                    natural_key = live_register_natural_key(cleaned_raw)
+                    duplicate_indexes[natural_key] += 1
+                    duplicate_index = duplicate_indexes[natural_key]
+
+                row = _normalise_csv_row(raw, line_number=line_number, duplicate_index=duplicate_index)
                 programme_code = row.pop("programme_code", None)
                 programme_id = row.get("programme_id")
                 if programme_code:

@@ -28,6 +28,7 @@ The application keeps the asset baseline, risk assessment and programme packages
 - Full operator/developer guide: `docs/SOLUTION_GUIDE.md`
 - Current code assessment, verification evidence and issue register: `docs/ASSESSMENT_REPORT.md`
 - Field-level import and validation reference: `docs/DATA_DICTIONARY.md`
+- Live TPCMS register mapping and clean import notes: `docs/LIVE_REGISTER_MAPPING.md`
 
 ## Architecture
 

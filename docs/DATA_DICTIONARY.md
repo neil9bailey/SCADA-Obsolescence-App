@@ -70,6 +70,8 @@ The API derives `asset_count`, `critical_assets`, `average_risk` and `total_budg
 ## Import behavior
 
 - New rows require `asset_code`, `system_name` and `site`.
+- The TPCMS live obsolescence-register format is also recognised and mapped before
+  validation. See `docs/LIVE_REGISTER_MAPPING.md`.
 - Existing records are matched by exact `asset_code` and updated.
 - Empty optional CSV cells do not overwrite existing values.
 - `programme_code` must already exist in the programme table.
