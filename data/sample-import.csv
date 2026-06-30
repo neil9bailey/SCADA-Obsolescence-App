@@ -1,0 +1,2 @@
+asset_code,system_name,site,process_area,asset_type,manufacturer,model,software_version,firmware_version,os_version,support_status,support_end_date,business_criticality,safety_impact,production_impact,cyber_exposure,failure_likelihood,spares_risk,recoverability_risk,dependency_complexity,evidence_confidence,delivery_readiness,treatment,owner,notes,programme_code
+DEMO-PLC-101,Example transfer PLC,Example Site,Pump hall,PLC,Example Automation,PLC-500,,5.4,,limited,2028-12-31,4,4,5,3,3,4,4,3,B,2,upgrade,Example Engineering,Replace during planned panel outage,OBP-002

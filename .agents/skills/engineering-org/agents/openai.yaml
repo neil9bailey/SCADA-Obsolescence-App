@@ -1,0 +1,17 @@
+interface:
+  display_name: "Engineering Org"
+  short_description: "Run a governed CTO-led engineering team (architecture review, gates, real end-user UAT)."
+  brand_color: "#0F766E"
+  default_prompt: "Run this task through the governed engineering org. Start at G0 with the Delivery Lead."
+
+policy:
+  # Let Codex pull the team in automatically when a task is non-trivial / touches
+  # architecture / governance / acceptance. Set to false if you want explicit-only.
+  allow_implicit_invocation: true
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "agentTeam"
+      description: "Agent-team MCP server enforcing governance gates and drift control"
+      transport: "stdio"

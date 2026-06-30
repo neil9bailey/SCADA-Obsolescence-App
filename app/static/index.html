@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Dynamic SCADA obsolescence portfolio and programme management application">
+  <title>SCADA Lifecycle Command Centre</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" role="img"><path d="M5 23.5V8.8c0-1 .8-1.8 1.8-1.8h18.4c1 0 1.8.8 1.8 1.8v14.7c0 1-.8 1.8-1.8 1.8H6.8c-1 0-1.8-.8-1.8-1.8Z"/><path d="M9 20l4-4 3 2 6-7"/><circle cx="22" cy="11" r="2"/></svg>
+        </div>
+        <div>
+          <strong>SCADA</strong>
+          <span>Lifecycle Command Centre</span>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="Primary navigation">
+        <button class="nav-item" data-nav="dashboard">
+          <span class="nav-icon">⌁</span><span>Portfolio dashboard</span>
+        </button>
+        <button class="nav-item" data-nav="assets">
+          <span class="nav-icon">▦</span><span>Asset register</span>
+        </button>
+        <button class="nav-item" data-nav="programmes">
+          <span class="nav-icon">◇</span><span>Programme packages</span>
+        </button>
+        <button class="nav-item" data-nav="data">
+          <span class="nav-icon">⇅</span><span>Data exchange</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-panel">
+        <div class="pulse-dot"></div>
+        <div>
+          <strong>Live database</strong>
+          <span>Changes recalculate risk instantly</span>
+        </div>
+      </div>
+      <div class="sidebar-note">
+        Planning application only. Keep it outside production control paths and broker any OT data transfer.
+      </div>
+      <div class="sidebar-footer">MVP · v0.1</div>
+    </aside>
+
+    <div class="main-column">
+      <header class="topbar">
+        <button class="icon-button mobile-menu" id="mobile-menu" aria-label="Open navigation">☰</button>
+        <div class="page-heading">
+          <p id="page-kicker">Portfolio intelligence</p>
+          <h1 id="page-title">Dashboard</h1>
+        </div>
+        <form class="global-search" id="global-search-form" role="search">
+          <span aria-hidden="true">⌕</span>
+          <input id="global-search" type="search" placeholder="Find asset, system or owner" aria-label="Search assets">
+        </form>
+        <a class="api-link" href="/api/docs" target="_blank" rel="noreferrer">API</a>
+      </header>
+
+      <main id="view" class="view" tabindex="-1">
+        <div class="loading-state"><div class="spinner"></div><p>Loading portfolio…</p></div>
+      </main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modal-backdrop" hidden>
+    <section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"></section>
+  </div>
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

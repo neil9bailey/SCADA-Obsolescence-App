@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: scada_lifecycle
+      POSTGRES_USER: scada_app
+      POSTGRES_PASSWORD: ${SCADA_DB_PASSWORD:-change-this-password}
+    volumes:
+      - scada_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scada_app -d scada_lifecycle"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://scada_app:${SCADA_DB_PASSWORD:-change-this-password}@db:5432/scada_lifecycle
+      SEED_DEMO: ${SEED_DEMO:-true}
+      AUTO_CREATE_SCHEMA: ${AUTO_CREATE_SCHEMA:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  scada_postgres:
