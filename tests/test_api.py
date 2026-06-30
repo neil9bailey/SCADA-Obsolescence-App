@@ -36,6 +36,15 @@ def test_health_and_empty_dashboard(client):
     assert dashboard["metrics"]["total_assets"] == 0
 
 
+def test_ui_alias_and_favicon_do_not_404(client):
+    ui = client.get("/ui")
+    assert ui.status_code == 200
+    assert "SCADA Lifecycle Command Centre" in ui.text
+
+    favicon = client.get("/favicon.ico")
+    assert favicon.status_code == 204
+
+
 def test_operational_compatibility_endpoints(client):
     health = client.get("/admin/health")
     assert health.status_code == 200
