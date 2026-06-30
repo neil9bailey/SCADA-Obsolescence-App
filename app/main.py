@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import API_PREFIX, APP_NAME, AUTO_CREATE_SCHEMA, SEED_DEMO
 from app.db import SessionLocal, init_db
-from app.routers import assets, dashboard, health, programmes
+from app.routers import assets, dashboard, health, operations, programmes
 from app.seed import seed_demo_data
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -45,7 +45,7 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    if request.url.path.startswith("/api"):
+    if request.url.path.startswith(("/api", "/admin", "/trust")):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -54,6 +54,7 @@ app.include_router(health.router, prefix=API_PREFIX)
 app.include_router(dashboard.router, prefix=API_PREFIX)
 app.include_router(assets.router, prefix=API_PREFIX)
 app.include_router(programmes.router, prefix=API_PREFIX)
+app.include_router(operations.router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 

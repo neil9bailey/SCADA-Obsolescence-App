@@ -36,6 +36,30 @@ def test_health_and_empty_dashboard(client):
     assert dashboard["metrics"]["total_assets"] == 0
 
 
+def test_operational_compatibility_endpoints(client):
+    health = client.get("/admin/health")
+    assert health.status_code == 200
+    assert health.headers["Cache-Control"] == "no-store"
+    assert health.json()["status"] == "ok"
+    assert health.json()["database"] == "reachable"
+
+    trust = client.get("/trust/status")
+    assert trust.status_code == 200
+    assert trust.headers["Cache-Control"] == "no-store"
+    trust_body = trust.json()
+    assert trust_body["status"] == "ok"
+    assert trust_body["trust_status"] == "trusted"
+    assert trust_body["data_source"] == "relational_database"
+
+    metrics = client.get("/admin/metrics")
+    assert metrics.status_code == 200
+    assert metrics.headers["Cache-Control"] == "no-store"
+    assert metrics.headers["content-type"].startswith("text/plain")
+    assert "scada_database_reachable 1" in metrics.text
+    assert "scada_assets_total 0" in metrics.text
+    assert "scada_programmes_total 0" in metrics.text
+
+
 def test_asset_crud_recalculates_assessment(client):
     created = client.post("/api/assets", json=asset_payload())
     assert created.status_code == 201, created.text
