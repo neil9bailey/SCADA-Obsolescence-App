@@ -21,6 +21,7 @@ from app.services.live_register_import import (
     is_live_register_fieldnames,
     live_register_natural_key,
     map_live_register_row,
+    read_live_register_workbook,
 )
 from app.services.risk import apply_assessment
 
@@ -69,6 +70,24 @@ CSV_FIELDS = [
     "data_completeness",
 ]
 
+SOURCE_EXPORT_PLATFORM_FIELDS = [
+    "platform_asset_code",
+    "platform_risk_score",
+    "platform_risk_band",
+    "platform_recommended_wave",
+    "platform_support_status",
+    "platform_treatment",
+    "platform_evidence_confidence",
+    "platform_data_completeness",
+    "platform_source_workbook",
+    "platform_source_sheet",
+    "platform_source_row",
+    "platform_source_category",
+    "platform_source_subcategory",
+    "platform_automation_flags",
+    "platform_formula_columns",
+]
+
 INTEGER_FIELDS = {
     "business_criticality",
     "safety_impact",
@@ -80,6 +99,17 @@ INTEGER_FIELDS = {
     "dependency_complexity",
     "delivery_readiness",
     "programme_id",
+}
+
+SOURCE_FIELDS = {
+    "source_workbook",
+    "source_sheet",
+    "source_row",
+    "source_category",
+    "source_subcategory",
+    "source_payload",
+    "source_formulas",
+    "source_intelligence",
 }
 
 
@@ -94,7 +124,17 @@ def _programme_exists(db: Session, programme_id: int | None) -> bool:
     return programme_id is None or db.get(Programme, programme_id) is not None
 
 
-def _normalise_csv_row(raw: dict[str, Any], *, line_number: int, duplicate_index: int = 1) -> dict[str, Any]:
+def _normalise_csv_row(
+    raw: dict[str, Any],
+    *,
+    line_number: int,
+    duplicate_index: int = 1,
+    source_workbook: str | None = None,
+    source_sheet: str | None = None,
+    source_row: int | None = None,
+    source_payload: dict[str, Any] | None = None,
+    source_formulas: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     row: dict[str, Any] = {}
     for key, value in raw.items():
         if key is None:
@@ -107,7 +147,16 @@ def _normalise_csv_row(raw: dict[str, Any], *, line_number: int, duplicate_index
         row[clean_key] = value
 
     if "asset_code" not in row and is_live_register_fieldnames(list(row)):
-        row = map_live_register_row(row, line_number=line_number, duplicate_index=duplicate_index)
+        row = map_live_register_row(
+            row,
+            line_number=line_number,
+            duplicate_index=duplicate_index,
+            source_workbook=source_workbook,
+            source_sheet=source_sheet,
+            source_row=source_row,
+            source_payload=source_payload,
+            source_formulas=source_formulas,
+        )
 
     for field in INTEGER_FIELDS:
         if row.get(field) is not None:
@@ -119,10 +168,16 @@ def _normalise_csv_row(raw: dict[str, Any], *, line_number: int, duplicate_index
 def get_facets(db: Session = Depends(get_db)) -> dict:
     sites = db.scalars(select(Asset.site).distinct().order_by(Asset.site)).all()
     asset_types = db.scalars(select(Asset.asset_type).distinct().order_by(Asset.asset_type)).all()
+    source_categories = db.scalars(select(Asset.source_category).distinct().order_by(Asset.source_category)).all()
+    source_subcategories = db.scalars(
+        select(Asset.source_subcategory).distinct().order_by(Asset.source_subcategory)
+    ).all()
     programmes = db.scalars(select(Programme).order_by(Programme.package_code)).all()
     return {
         "sites": [site for site in sites if site],
         "asset_types": [value for value in asset_types if value],
+        "source_categories": [value for value in source_categories if value],
+        "source_subcategories": [value for value in source_subcategories if value],
         "programmes": [
             {"id": programme.id, "package_code": programme.package_code, "title": programme.title}
             for programme in programmes
@@ -152,25 +207,90 @@ def export_assets(db: Session = Depends(get_db)) -> StreamingResponse:
     return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers=headers)
 
 
+@router.get("/source-export.csv")
+def export_source_assets(db: Session = Depends(get_db)) -> StreamingResponse:
+    assets = db.scalars(select(Asset).order_by(Asset.source_row, Asset.asset_code)).all()
+    source_assets = [asset for asset in assets if asset.source_payload]
+    source_fields: list[str] = []
+    seen_source_fields: set[str] = set()
+    for asset in source_assets:
+        for field in (asset.source_payload or {}):
+            if field not in seen_source_fields:
+                seen_source_fields.add(field)
+                source_fields.append(field)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=[*SOURCE_EXPORT_PLATFORM_FIELDS, *source_fields])
+    writer.writeheader()
+    for asset in source_assets:
+        intelligence = asset.source_intelligence or {}
+        row = {
+            "platform_asset_code": asset.asset_code,
+            "platform_risk_score": asset.risk_score,
+            "platform_risk_band": asset.risk_band,
+            "platform_recommended_wave": asset.recommended_wave,
+            "platform_support_status": asset.support_status,
+            "platform_treatment": asset.treatment,
+            "platform_evidence_confidence": asset.evidence_confidence,
+            "platform_data_completeness": asset.data_completeness,
+            "platform_source_workbook": asset.source_workbook or "",
+            "platform_source_sheet": asset.source_sheet or "",
+            "platform_source_row": asset.source_row or "",
+            "platform_source_category": asset.source_category or "",
+            "platform_source_subcategory": asset.source_subcategory or "",
+            "platform_automation_flags": ";".join(intelligence.get("automation_flags") or []),
+            "platform_formula_columns": ";".join((asset.source_formulas or {}).keys()),
+        }
+        row.update(asset.source_payload or {})
+        writer.writerow(row)
+
+    output.seek(0)
+    headers = {"Content-Disposition": 'attachment; filename="tpcms-source-register-export.csv"'}
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers=headers)
+
+
 @router.post("/import", response_model=ImportResult)
 async def import_assets(file: UploadFile = File(...), db: Session = Depends(get_db)) -> ImportResult:
-    if not file.filename or not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Upload a CSV file")
+    if not file.filename or not file.filename.lower().endswith((".csv", ".xlsx")):
+        raise HTTPException(status_code=400, detail="Upload a CSV file or recognised TPCMS workbook")
 
     contents = await file.read()
-    try:
-        text = contents.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from exc
+    filename = file.filename
+    filename_lower = filename.lower()
+    import_kind = "workbook" if filename_lower.endswith(".xlsx") else "CSV"
 
-    reader = csv.DictReader(io.StringIO(text))
-    fieldnames = [name.strip().lstrip("\ufeff") for name in reader.fieldnames or []]
-    live_register = is_live_register_fieldnames(fieldnames)
-    if not fieldnames or ("asset_code" not in fieldnames and not live_register):
-        raise HTTPException(
-            status_code=400,
-            detail="CSV must contain an asset_code column or recognised live obsolescence register columns",
-        )
+    if filename_lower.endswith(".xlsx"):
+        try:
+            import_rows = read_live_register_workbook(contents, filename)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        live_register = True
+    else:
+        try:
+            text = contents.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from exc
+
+        reader = csv.DictReader(io.StringIO(text))
+        fieldnames = [name.strip().lstrip("\ufeff") for name in reader.fieldnames or []]
+        live_register = is_live_register_fieldnames(fieldnames)
+        if not fieldnames or ("asset_code" not in fieldnames and not live_register):
+            raise HTTPException(
+                status_code=400,
+                detail="CSV must contain an asset_code column or recognised live obsolescence register columns",
+            )
+        import_rows = [
+            {
+                "row": raw,
+                "line_number": line_number,
+                "source_workbook": filename if live_register else None,
+                "source_sheet": "CSV" if live_register else None,
+                "source_row": line_number if live_register else None,
+                "source_payload": None,
+                "source_formulas": None,
+            }
+            for line_number, raw in enumerate(reader, start=2)
+        ]
 
     created = updated = failed = rows_received = 0
     errors: list[str] = []
@@ -178,8 +298,10 @@ async def import_assets(file: UploadFile = File(...), db: Session = Depends(get_
     update_fields = set(AssetUpdate.model_fields)
     duplicate_indexes: defaultdict[tuple[str, ...], int] = defaultdict(int)
 
-    for line_number, raw in enumerate(reader, start=2):
+    for import_row in import_rows:
         rows_received += 1
+        line_number = int(import_row["line_number"])
+        raw = import_row["row"]
         try:
             with db.begin_nested():
                 duplicate_index = 1
@@ -189,7 +311,17 @@ async def import_assets(file: UploadFile = File(...), db: Session = Depends(get_
                     duplicate_indexes[natural_key] += 1
                     duplicate_index = duplicate_indexes[natural_key]
 
-                row = _normalise_csv_row(raw, line_number=line_number, duplicate_index=duplicate_index)
+                row = _normalise_csv_row(
+                    raw,
+                    line_number=line_number,
+                    duplicate_index=duplicate_index,
+                    source_workbook=import_row.get("source_workbook"),
+                    source_sheet=import_row.get("source_sheet"),
+                    source_row=import_row.get("source_row"),
+                    source_payload=import_row.get("source_payload"),
+                    source_formulas=import_row.get("source_formulas"),
+                )
+                source_updates = {field: row.pop(field) for field in SOURCE_FIELDS if field in row}
                 programme_code = row.pop("programme_code", None)
                 programme_id = row.get("programme_id")
                 if programme_code:
@@ -213,6 +345,8 @@ async def import_assets(file: UploadFile = File(...), db: Session = Depends(get_
                         raise ValueError("programme_id does not exist")
                     for key, value in validated.model_dump(exclude_unset=True).items():
                         setattr(existing, key, value)
+                    for key, value in source_updates.items():
+                        setattr(existing, key, value)
                     apply_assessment(existing)
                     db.flush()
                     updated += 1
@@ -221,7 +355,7 @@ async def import_assets(file: UploadFile = File(...), db: Session = Depends(get_
                     validated = AssetCreate.model_validate(create_payload)
                     if not _programme_exists(db, validated.programme_id):
                         raise ValueError("programme_id does not exist")
-                    asset = Asset(**validated.model_dump())
+                    asset = Asset(**validated.model_dump(), **source_updates)
                     apply_assessment(asset)
                     db.add(asset)
                     db.flush()
@@ -239,7 +373,7 @@ async def import_assets(file: UploadFile = File(...), db: Session = Depends(get_
         entity_type="asset",
         entity_id=None,
         action="import",
-        summary=f"Imported CSV: {created} created, {updated} updated, {failed} failed",
+        summary=f"Imported {import_kind}: {created} created, {updated} updated, {failed} failed",
     )
     db.commit()
     return ImportResult(
@@ -259,6 +393,8 @@ def list_assets(
     support_status: str | None = None,
     risk_band: str | None = None,
     programme_id: int | None = None,
+    source_category: str | None = None,
+    source_subcategory: str | None = None,
     sort_by: str = Query(default="risk_score"),
     sort_dir: str = Query(default="desc", pattern="^(asc|desc)$"),
     offset: int = Query(default=0, ge=0),
@@ -287,6 +423,10 @@ def list_assets(
         filters.append(Asset.risk_band == risk_band)
     if programme_id is not None:
         filters.append(Asset.programme_id == programme_id)
+    if source_category:
+        filters.append(Asset.source_category == source_category)
+    if source_subcategory:
+        filters.append(Asset.source_subcategory == source_subcategory)
 
     count_statement = select(func.count()).select_from(Asset)
     statement = select(Asset)

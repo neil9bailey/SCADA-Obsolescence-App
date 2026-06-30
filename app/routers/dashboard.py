@@ -13,6 +13,10 @@ from app.models import Asset, AuditEvent, Programme
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
+def _top_counts(counter: Counter, limit: int = 12) -> list[dict]:
+    return [{"name": name, "count": count} for name, count in counter.most_common(limit)]
+
+
 @router.get("/summary")
 def dashboard_summary(db: Session = Depends(get_db)) -> dict:
     assets = list(db.scalars(select(Asset).order_by(desc(Asset.risk_score))).all())
@@ -108,4 +112,59 @@ def dashboard_summary(db: Session = Depends(get_db)) -> dict:
             }
             for event in recent
         ],
+    }
+
+
+@router.get("/source-summary")
+def source_summary(db: Session = Depends(get_db)) -> dict:
+    assets = list(db.scalars(select(Asset)).all())
+    source_assets = [asset for asset in assets if asset.source_payload]
+    source_categories = Counter(asset.source_category for asset in source_assets if asset.source_category)
+    source_subcategories = Counter(asset.source_subcategory for asset in source_assets if asset.source_subcategory)
+    source_risk_factors: Counter = Counter()
+    source_statuses: Counter = Counter()
+    hardware_software: Counter = Counter()
+    automation_flags: Counter = Counter()
+    formula_columns: Counter = Counter()
+    total_estimated_cost = 0.0
+    total_quantity_in_field = 0
+
+    for asset in source_assets:
+        intelligence = asset.source_intelligence or {}
+        payload = asset.source_payload or {}
+        collation = intelligence.get("collation") or {}
+        if intelligence.get("source_risk_factor"):
+            source_risk_factors[intelligence["source_risk_factor"]] += 1
+        if intelligence.get("source_status"):
+            source_statuses[intelligence["source_status"]] += 1
+        if collation.get("hardware_software"):
+            hardware_software[collation["hardware_software"]] += 1
+        for flag in intelligence.get("automation_flags") or []:
+            automation_flags[flag] += 1
+        for column in (asset.source_formulas or {}):
+            formula_columns[column] += 1
+        if isinstance(intelligence.get("source_total_estimated_cost"), (int, float)):
+            total_estimated_cost += float(intelligence["source_total_estimated_cost"])
+        if isinstance(intelligence.get("source_quantity_in_field"), int):
+            total_quantity_in_field += int(intelligence["source_quantity_in_field"])
+        elif isinstance(payload.get("Qty in Field"), int):
+            total_quantity_in_field += int(payload["Qty in Field"])
+
+    return {
+        "generated_from": "source_workbook_metadata",
+        "source_records": len(source_assets),
+        "source_workbooks": sorted({asset.source_workbook for asset in source_assets if asset.source_workbook}),
+        "source_sheets": sorted({asset.source_sheet for asset in source_assets if asset.source_sheet}),
+        "totals": {
+            "estimated_cost": round(total_estimated_cost, 2),
+            "quantity_in_field": total_quantity_in_field,
+            "formula_columns": len(formula_columns),
+        },
+        "source_categories": _top_counts(source_categories),
+        "source_subcategories": _top_counts(source_subcategories),
+        "source_risk_factors": _top_counts(source_risk_factors),
+        "source_statuses": _top_counts(source_statuses),
+        "hardware_software": _top_counts(hardware_software),
+        "automation_flags": _top_counts(automation_flags),
+        "formula_columns": _top_counts(formula_columns),
     }

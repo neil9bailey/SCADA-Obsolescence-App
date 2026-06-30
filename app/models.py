@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -67,6 +67,14 @@ class Asset(Base):
     treatment: Mapped[str] = mapped_column(String(40), default="assess", index=True)
     owner: Mapped[str | None] = mapped_column(String(120), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_workbook: Mapped[str | None] = mapped_column(String(260), nullable=True)
+    source_sheet: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    source_row: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    source_category: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    source_subcategory: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    source_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_formulas: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_intelligence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     risk_score: Mapped[float] = mapped_column(Float, default=0, index=True)
     risk_band: Mapped[str] = mapped_column(String(20), default="Low", index=True)

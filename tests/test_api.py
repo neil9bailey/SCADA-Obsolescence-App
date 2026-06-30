@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import csv
 import io
+
+from openpyxl import Workbook
 
 
 def asset_payload(**overrides):
@@ -24,6 +27,120 @@ def asset_payload(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def live_register_workbook_bytes() -> io.BytesIO:
+    workbook = Workbook()
+    register = workbook.active
+    register.title = "Obsolescence Register"
+    headers = [
+        "Component Part",
+        "Component",
+        "Component Description",
+        "Manufacturer",
+        "Supplier",
+        "Responsible Team",
+        "Area",
+        "Hardware/Software",
+        "Functional / Non-Functional",
+        "Obsolete (Y/N)",
+        "End of Support",
+        "Cost Hit (EOS - 1 Year)",
+        "Status",
+        "Last Obsolescence Check or Update",
+        "System Criticality",
+        "Obsolescence Criticality",
+        "Cost Criticality",
+        "Replacement identified (Y/N)",
+        "Qty in Field",
+        "NR Spares Oty (Battle Boxes)",
+        "Telent Spares Qty",
+        "Recommend No of Spares",
+        "Unit Cost (est)",
+        "Total Estimated Cost (Component + Labour)",
+        "Full upgrade or ad-hoc replacement?",
+        "Risk Score",
+        "Risk Factor",
+        "Reason for Risk",
+        "Risk Assessment",
+    ]
+    register.append(headers)
+    rows = [
+        {
+            "Component Part": "BIG-AWF-R2800 Reverse Proxy Firewall",
+            "Component": "Firewall",
+            "Component Description": "Reverse Proxy firewall in the DMZ",
+            "Manufacturer": "F5",
+            "Supplier": "F5",
+            "Responsible Team": "Network",
+            "Area": "Network",
+            "Hardware/Software": "Software",
+            "Functional / Non-Functional": "Functional",
+            "Obsolete (Y/N)": "Y",
+            "End of Support": "01-Jan-25",
+            "Status": "Live / Current",
+            "Last Obsolescence Check or Update": "01-Jun-26",
+            "System Criticality": 4,
+            "Obsolescence Criticality": 3,
+            "Cost Criticality": 2,
+            "Replacement identified (Y/N)": "Y",
+            "Qty in Field": 2,
+            "NR Spares Oty (Battle Boxes)": 0,
+            "Telent Spares Qty": 0,
+            "Recommend No of Spares": 1,
+            "Unit Cost (est)": 1000,
+            "Total Estimated Cost (Component + Labour)": 2800,
+            "Full upgrade or ad-hoc replacement?": "Full Upgrade",
+            "Risk Score": 5.0,
+            "Risk Factor": "Critical",
+            "Reason for Risk": "End of support date has passed",
+            "Risk Assessment": "Replace through planned renewal",
+        },
+        {
+            "Component Part": "HIST-SRV-01",
+            "Component": "Historian Server",
+            "Component Description": "Site historian server",
+            "Manufacturer": "Dell",
+            "Supplier": "Dell",
+            "Responsible Team": "Control",
+            "Area": "CMS",
+            "Hardware/Software": "Hardware",
+            "Functional / Non-Functional": "Non-Functional",
+            "Obsolete (Y/N)": "N",
+            "Status": "Live / Current",
+            "Last Obsolescence Check or Update": "01-Jun-26",
+            "System Criticality": 3,
+            "Obsolescence Criticality": 2,
+            "Cost Criticality": 2,
+            "Replacement identified (Y/N)": "N",
+            "Qty in Field": 1,
+            "NR Spares Oty (Battle Boxes)": 1,
+            "Telent Spares Qty": 0,
+            "Recommend No of Spares": 1,
+            "Unit Cost (est)": 2500,
+            "Total Estimated Cost (Component + Labour)": 3500,
+            "Full upgrade or ad-hoc replacement?": "Ad-hoc replacement",
+            "Risk Score": 3.0,
+            "Risk Factor": "Medium",
+            "Reason for Risk": "Support date needs confirmation",
+            "Risk Assessment": "Monitor and confirm lifecycle evidence",
+        },
+    ]
+    for source_row in rows:
+        register.append([source_row.get(header) for header in headers])
+
+    cost_hit_column = headers.index("Cost Hit (EOS - 1 Year)") + 1
+    register.cell(row=2, column=cost_hit_column).value = "=K2-365"
+    register.cell(row=3, column=cost_hit_column).value = "=K3-365"
+    workbook.create_sheet("Front Sheet")
+    workbook.create_sheet("Risk Factor Key")
+    cross_reference = workbook.create_sheet("PA certs items cross-ref")
+    cross_reference.sheet_state = "hidden"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer
 
 
 def test_health_and_empty_dashboard(client):
@@ -237,6 +354,77 @@ BIG-AWF-R2800 Reverse Proxy Firewall,Firewall,Reverse Proxy firewall in the DMZ,
     repeated = client.post(
         "/api/assets/import",
         files={"file": ("live-register.csv", io.BytesIO(csv_text.encode()), "text/csv")},
+    )
+    assert repeated.status_code == 200, repeated.text
+    repeated_result = repeated.json()
+    assert repeated_result["created"] == 0
+    assert repeated_result["updated"] == 2
+    assert repeated_result["failed"] == 0
+
+
+def test_live_obsolescence_workbook_import_preserves_source_fields_and_exports(client):
+    response = client.post(
+        "/api/assets/import",
+        files={
+            "file": (
+                "live-register.xlsx",
+                live_register_workbook_bytes(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["created"] == 2
+    assert result["updated"] == 0
+    assert result["failed"] == 0
+
+    listed = client.get("/api/assets", params={"source_category": "Network", "limit": 10}).json()
+    assert listed["total"] == 1
+    asset = listed["items"][0]
+    assert asset["source_workbook"] == "live-register.xlsx"
+    assert asset["source_sheet"] == "Obsolescence Register"
+    assert asset["source_row"] == 2
+    assert asset["source_category"] == "Network"
+    assert asset["source_subcategory"] == "Network"
+    assert asset["source_payload"]["Component Part"] == "BIG-AWF-R2800 Reverse Proxy Firewall"
+    assert asset["source_payload"]["Total Estimated Cost (Component + Labour)"] == 2800
+    assert asset["source_formulas"]["Cost Hit (EOS - 1 Year)"] == "=K2-365"
+    assert asset["source_intelligence"]["source_risk_factor"] == "Critical"
+    assert asset["source_intelligence"]["collation"]["hardware_software"] == "Software"
+    assert "source_high_risk" in asset["source_intelligence"]["automation_flags"]
+
+    source_summary = client.get("/api/dashboard/source-summary")
+    assert source_summary.status_code == 200
+    source = source_summary.json()
+    assert source["source_records"] == 2
+    assert source["source_workbooks"] == ["live-register.xlsx"]
+    assert source["totals"]["estimated_cost"] == 6300
+    assert source["totals"]["quantity_in_field"] == 3
+    assert source["totals"]["formula_columns"] == 1
+    assert {"name": "Network", "count": 1} in source["source_categories"]
+    assert {"name": "Cost Hit (EOS - 1 Year)", "count": 2} in source["formula_columns"]
+
+    source_export = client.get("/api/assets/source-export.csv")
+    assert source_export.status_code == 200
+    exported_rows = list(csv.DictReader(io.StringIO(source_export.text)))
+    assert len(exported_rows) == 2
+    network_row = next(row for row in exported_rows if row["Area"] == "Network")
+    assert network_row["Component Part"] == "BIG-AWF-R2800 Reverse Proxy Firewall"
+    assert network_row["platform_source_category"] == "Network"
+    assert network_row["platform_risk_band"] in {"High", "Critical"}
+    assert network_row["platform_formula_columns"] == "Cost Hit (EOS - 1 Year)"
+    assert "source_high_risk" in network_row["platform_automation_flags"]
+
+    repeated = client.post(
+        "/api/assets/import",
+        files={
+            "file": (
+                "live-register.xlsx",
+                live_register_workbook_bytes(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
     )
     assert repeated.status_code == 200, repeated.text
     repeated_result = repeated.json()

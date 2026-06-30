@@ -23,6 +23,8 @@ const state = {
     support_status: '',
     risk_band: '',
     programme_id: '',
+    source_category: '',
+    source_subcategory: '',
     sort_by: 'risk_score',
     sort_dir: 'desc',
   },
@@ -292,6 +294,8 @@ async function renderAssets() {
       <select class="select" name="site" data-filter>${options(facets.sites, state.assets.site, 'All sites')}</select>
       <select class="select" name="support_status" data-filter>${options(facets.support_statuses, state.assets.support_status, 'All lifecycle states')}</select>
       <select class="select" name="risk_band" data-filter>${options(facets.risk_bands, state.assets.risk_band, 'All risk bands')}</select>
+      <select class="select" name="source_category" data-filter>${options(facets.source_categories || [], state.assets.source_category, 'All source areas')}</select>
+      <select class="select" name="source_subcategory" data-filter>${options(facets.source_subcategories || [], state.assets.source_subcategory, 'All source teams')}</select>
       <select class="select" name="programme_id" data-filter>${options(facets.programmes.map((p) => ({ value: p.id, label: p.package_code })), state.assets.programme_id, 'All packages')}</select>
       <select class="select" name="sort_by" data-filter>${options([
         { value: 'risk_score', label: 'Sort: risk score' }, { value: 'asset_code', label: 'Sort: asset code' }, { value: 'site', label: 'Sort: site' }, { value: 'updated_at', label: 'Sort: updated' },
@@ -340,31 +344,33 @@ async function renderProgrammes() {
 
 async function renderData() {
   setLoading('Preparing data controls…');
-  const [summary, meta] = await Promise.all([api('/api/dashboard/summary'), loadMeta()]);
+  const [summary, meta, source] = await Promise.all([api('/api/dashboard/summary'), loadMeta(), api('/api/dashboard/source-summary')]);
   const q = summary.data_quality;
+  const sourceAreas = source.source_categories.length ? distributionRows(source.source_categories.slice(0, 6)) : '<div class="empty-state"><span>No source workbook metadata yet.</span></div>';
+  const sourceFlags = source.automation_flags.length ? source.automation_flags.slice(0, 6).map((item) => `<div class="quality-card"><strong>${item.count}</strong><span>${esc(label(item.name))}</span></div>`).join('') : '<div class="empty-state"><span>No automation flags yet.</span></div>';
   viewEl.innerHTML = `
     <div class="page-intro">
-      <div><h2>Move the register without losing control</h2><p>Import existing CSV data into normalized records, upsert by asset code, and export the current database whenever an offline handoff is required.</p></div>
-      <div class="page-actions"><a class="button secondary" href="/api/assets/export.csv">⇩ Export current register</a></div>
+      <div><h2>Move the register without losing control</h2><p>Import the TPCMS workbook or a controlled CSV, preserve source fields, upsert by asset code, and export the current database whenever an offline handoff is required.</p></div>
+      <div class="page-actions"><a class="button secondary" href="/api/assets/source-export.csv">⇩ Export source fields</a><a class="button secondary" href="/api/assets/export.csv">⇩ Export current register</a></div>
     </div>
     <div class="callout"><div class="callout-icon">!</div><div><strong>Use a controlled transfer route</strong><p>This application is for lifecycle planning. Do not connect it directly to production SCADA or permit active discovery from the application tier.</p></div></div>
     <section class="content-grid">
       <article class="panel">
-        <div class="panel-header"><div><h3>CSV import</h3><p>Existing asset_code values are updated; new codes are created</p></div><a class="button ghost small" href="/static/sample-import.csv">Sample template ↓</a></div>
+        <div class="panel-header"><div><h3>Workbook and CSV import</h3><p>Existing asset_code values are updated; new codes are created</p></div><a class="button ghost small" href="/static/sample-import.csv">Sample template ↓</a></div>
         <div class="panel-body">
           <form id="import-form">
             <div class="upload-zone" id="upload-zone">
               <div class="upload-symbol">⇧</div>
-              <h3 id="upload-title">Drop a UTF-8 CSV here</h3>
+              <h3 id="upload-title">Drop a TPCMS workbook or UTF-8 CSV here</h3>
               <p id="upload-file-name">or select a file from a controlled workspace</p>
-              <input type="file" id="import-file" accept=".csv,text/csv" hidden>
-              <button class="button secondary" type="button" data-action="select-import-file">Choose CSV</button>
+              <input type="file" id="import-file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+              <button class="button secondary" type="button" data-action="select-import-file">Choose file</button>
               <button class="button primary" type="submit">Import into database</button>
             </div>
           </form>
           <div id="import-result" class="import-result"></div>
         </div>
-        <div class="panel-footer">The importer validates 1–5 ratings, lifecycle values and programme references. Computed risk fields are ignored and recalculated.</div>
+        <div class="panel-footer">Workbook imports preserve original source columns and formulas, while platform risk fields remain recalculated and governed.</div>
       </article>
       <article class="panel">
         <div class="panel-header"><div><h3>Current data quality</h3><p>${summary.metrics.total_assets} records in the relational database</p></div>${badge(`${q.average_completeness}% complete`)}</div>
@@ -381,7 +387,8 @@ async function renderData() {
       </article>
     </section>
     <section class="content-grid equal">
-      <article class="panel"><div class="panel-header"><div><h3>Required minimum columns</h3><p>For creation</p></div></div><div class="panel-body"><p><span class="code">asset_code</span>, <span class="code">system_name</span> and <span class="code">site</span>. All other fields have controlled defaults, but incomplete evidence remains visible in the quality score.</p></div></article>
+      <article class="panel"><div class="panel-header"><div><h3>Source workbook intelligence</h3><p>${source.source_records} records retaining original workbook fields</p></div>${badge(`${source.totals.formula_columns} formula columns`)}</div><div class="panel-body"><div class="quality-grid"><div class="quality-card"><strong>${source.source_records}</strong><span>Source records</span></div><div class="quality-card"><strong>${formatMoney(source.totals.estimated_cost)}</strong><span>Workbook total estimate</span></div><div class="quality-card"><strong>${source.totals.quantity_in_field}</strong><span>Quantity in field</span></div><div class="quality-card"><strong>${source.source_workbooks.length}</strong><span>Source workbooks</span></div></div><div class="distribution">${sourceAreas}</div></div></article>
+      <article class="panel"><div class="panel-header"><div><h3>Automation flags</h3><p>Signals generated from source fields for follow-up and collation</p></div></div><div class="panel-body"><div class="quality-grid">${sourceFlags}</div></div></article>
       <article class="panel"><div class="panel-header"><div><h3>Production database path</h3><p>Scale without redesigning the API</p></div></div><div class="panel-body"><p>Set <span class="code">DATABASE_URL</span> to a managed PostgreSQL service, run schema migrations, place the application behind enterprise SSO and retain database backups and audit logs.</p></div></article>
     </section>`;
   bindUploadZone();
@@ -508,7 +515,7 @@ function bindUploadZone() {
   const setFile = (file) => {
     state.pendingImportFile = file || null;
     document.getElementById('upload-file-name').textContent = file ? `${file.name} · ${Math.max(1, Math.round(file.size / 1024))} KB` : 'or select a file from a controlled workspace';
-    document.getElementById('upload-title').textContent = file ? 'Ready to validate and import' : 'Drop a UTF-8 CSV here';
+    document.getElementById('upload-title').textContent = file ? 'Ready to validate and import' : 'Drop a TPCMS workbook or UTF-8 CSV here';
   };
   input.addEventListener('change', () => setFile(input.files[0]));
   ['dragenter', 'dragover'].forEach((name) => zone.addEventListener(name, (event) => { event.preventDefault(); zone.classList.add('dragging'); }));
@@ -566,7 +573,7 @@ document.addEventListener('click', async (event) => {
     if (action === 'edit-programme') await openProgrammeModal(Number(target.dataset.id));
     if (action === 'close-modal') closeModal();
     if (action === 'clear-asset-filters') {
-      Object.assign(state.assets, { offset: 0, q: '', site: '', asset_type: '', support_status: '', risk_band: '', programme_id: '', sort_by: 'risk_score', sort_dir: 'desc' });
+      Object.assign(state.assets, { offset: 0, q: '', site: '', asset_type: '', support_status: '', risk_band: '', programme_id: '', source_category: '', source_subcategory: '', sort_by: 'risk_score', sort_dir: 'desc' });
       await renderAssets();
     }
     if (action === 'asset-prev') {
@@ -653,7 +660,7 @@ document.addEventListener('submit', async (event) => {
     const input = document.getElementById('import-file');
     const file = state.pendingImportFile || input?.files?.[0];
     if (!file) {
-      toast('Choose a CSV first', 'No file has been selected.', 'error');
+      toast('Choose a workbook or CSV first', 'No file has been selected.', 'error');
       return;
     }
     const data = new FormData();

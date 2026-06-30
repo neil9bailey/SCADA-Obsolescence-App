@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from hashlib import sha1
+from io import BytesIO
+from pathlib import Path
 import re
 from typing import Any
 
+from openpyxl import load_workbook
+
 NULL_MARKERS = {"", "-", "N/A", "#N/A", "TBC", "NOT ANNOUNCED", "NO DATE GIVEN"}
+LIVE_REGISTER_SHEET = "Obsolescence Register"
 
 LIVE_REGISTER_REQUIRED_COLUMNS = {
     "Component Part",
@@ -32,6 +37,20 @@ def _clean(value: Any) -> str | None:
     return None if text.upper() in NULL_MARKERS else text
 
 
+def _json_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return value
+    return str(value)
+
+
 def _truncate(value: str | None, max_length: int) -> str | None:
     if value is None:
         return None
@@ -39,6 +58,8 @@ def _truncate(value: str | None, max_length: int) -> str | None:
 
 
 def _parse_number(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
     text = _clean(value)
     if text is None:
         return None
@@ -74,6 +95,10 @@ def _source_risk_rating(value: Any, default: int = 3) -> int:
 
 
 def _parse_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
     text = _clean(value)
     if text is None:
         return None
@@ -102,6 +127,14 @@ def is_live_register_fieldnames(fieldnames: list[str] | None) -> bool:
 
 def live_register_natural_key(row: dict[str, Any]) -> tuple[str, ...]:
     return tuple(_clean(row.get(column)) or "" for column in LIVE_REGISTER_IDENTITY_COLUMNS)
+
+
+def _normalised_source_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        normalise_live_header(key): _json_value(value)
+        for key, value in row.items()
+        if normalise_live_header(key)
+    }
 
 
 def _asset_code(row: dict[str, Any], duplicate_index: int) -> str:
@@ -259,11 +292,114 @@ def _notes(row: dict[str, Any], line_number: int) -> str:
     )
 
 
+def _source_intelligence(row: dict[str, Any], support_end_date: date | None, spares_risk: int) -> dict[str, Any]:
+    source_risk_score = _parse_number(row.get("Risk Score"))
+    source_risk_factor = _clean(row.get("Risk Factor"))
+    replacement = _clean(row.get("Replacement identified (Y/N)"))
+    support_status = _support_status(row, support_end_date)
+    support_evidence = "dated" if support_end_date else "missing"
+    if _clean(row.get("End of Support")) is not None and support_end_date is None:
+        support_evidence = "textual"
+
+    flags: list[str] = []
+    if source_risk_factor in {"Critical", "High"}:
+        flags.append("source_high_risk")
+    if support_status == "end_of_support" and (replacement or "").upper() != "Y":
+        flags.append("end_of_support_without_confirmed_replacement")
+    if spares_risk >= 5:
+        flags.append("spares_below_recommended")
+    if not _clean(row.get("Responsible Team")):
+        flags.append("missing_owner")
+    if support_end_date is None:
+        flags.append("missing_support_date")
+    if "no component" in (_clean(row.get("Risk Factor")) or "").lower():
+        flags.append("no_component_in_field")
+    if source_risk_score is None:
+        flags.append("missing_source_risk_score")
+
+    return {
+        "source_risk_score": source_risk_score,
+        "source_risk_factor": source_risk_factor,
+        "source_reason_for_risk": _clean(row.get("Reason for Risk")),
+        "source_risk_assessment": _clean(row.get("Risk Assessment")),
+        "source_status": _clean(row.get("Status")),
+        "source_support_evidence": support_evidence,
+        "source_replacement_identified": replacement,
+        "source_total_estimated_cost": _parse_number(row.get("Total Estimated Cost (Component + Labour)")),
+        "source_quantity_in_field": _parse_int(row.get("Qty in Field")),
+        "source_unit_cost": _parse_number(row.get("Unit Cost (est)")),
+        "collation": {
+            "area": _clean(row.get("Area")),
+            "responsible_team": _clean(row.get("Responsible Team")),
+            "hardware_software": _clean(row.get("Hardware/Software")),
+            "functional_class": _clean(row.get("Functional / Non-Functional")),
+            "status": _clean(row.get("Status")),
+            "risk_factor": source_risk_factor,
+            "replacement_identified": replacement,
+            "manufacturer": _clean(row.get("Manufacturer")),
+            "supplier": _clean(row.get("Supplier")),
+        },
+        "automation_flags": flags,
+    }
+
+
+def read_live_register_workbook(contents: bytes, filename: str) -> list[dict[str, Any]]:
+    values_workbook = load_workbook(BytesIO(contents), data_only=True, read_only=False)
+    formula_workbook = load_workbook(BytesIO(contents), data_only=False, read_only=False)
+    if LIVE_REGISTER_SHEET not in values_workbook.sheetnames:
+        raise ValueError(f"workbook must contain a '{LIVE_REGISTER_SHEET}' sheet")
+
+    values_sheet = values_workbook[LIVE_REGISTER_SHEET]
+    formula_sheet = formula_workbook[LIVE_REGISTER_SHEET]
+    headers: list[tuple[int, str]] = []
+    for column in range(1, values_sheet.max_column + 1):
+        header = normalise_live_header(values_sheet.cell(1, column).value)
+        if header:
+            headers.append((column, header))
+
+    if not is_live_register_fieldnames([header for _, header in headers]):
+        raise ValueError("workbook register sheet is missing required live obsolescence columns")
+
+    rows: list[dict[str, Any]] = []
+    for row_number in range(2, values_sheet.max_row + 1):
+        row: dict[str, Any] = {}
+        source_payload: dict[str, Any] = {}
+        source_formulas: dict[str, str] = {}
+        has_data = False
+        for column, header in headers:
+            value = values_sheet.cell(row_number, column).value
+            formula = formula_sheet.cell(row_number, column).value
+            row[header] = value
+            source_payload[header] = _json_value(value)
+            if value not in (None, ""):
+                has_data = True
+            if isinstance(formula, str) and formula.startswith("="):
+                source_formulas[header] = formula
+        if has_data:
+            rows.append(
+                {
+                    "row": row,
+                    "line_number": row_number,
+                    "source_workbook": Path(filename).name,
+                    "source_sheet": LIVE_REGISTER_SHEET,
+                    "source_row": row_number,
+                    "source_payload": source_payload,
+                    "source_formulas": source_formulas,
+                }
+            )
+    return rows
+
+
 def map_live_register_row(
     row: dict[str, Any],
     *,
     line_number: int,
     duplicate_index: int = 1,
+    source_workbook: str | None = None,
+    source_sheet: str | None = None,
+    source_row: int | None = None,
+    source_payload: dict[str, Any] | None = None,
+    source_formulas: dict[str, Any] | None = None,
     today: date | None = None,
 ) -> dict[str, Any]:
     source_risk = _source_risk_rating(row.get("Risk Factor"))
@@ -278,6 +414,11 @@ def map_live_register_row(
     component = _clean(row.get("Component"))
     description = _clean(row.get("Component Description"))
     hardware_software = _clean(row.get("Hardware/Software"))
+
+    spares_risk = _spares_risk(row, obsolescence_criticality)
+    source_intelligence = _source_intelligence(row, support_end_date, spares_risk)
+    source_payload = source_payload or _normalised_source_payload(row)
+    source_formulas = source_formulas or {}
 
     return {
         "asset_code": _asset_code(row, duplicate_index),
@@ -297,7 +438,7 @@ def map_live_register_row(
         "production_impact": system_criticality,
         "cyber_exposure": _cyber_exposure(row, obsolescence_criticality),
         "failure_likelihood": obsolescence_criticality,
-        "spares_risk": _spares_risk(row, obsolescence_criticality),
+        "spares_risk": spares_risk,
         "recoverability_risk": max(obsolescence_criticality, cost_criticality),
         "dependency_complexity": max(2, round((system_criticality + obsolescence_criticality) / 2)),
         "evidence_confidence": _evidence_confidence(row),
@@ -305,4 +446,12 @@ def map_live_register_row(
         "treatment": _treatment(row),
         "owner": _truncate(_clean(row.get("Responsible Team")), 120),
         "notes": _notes(row, line_number),
+        "source_workbook": _truncate(source_workbook, 260),
+        "source_sheet": _truncate(source_sheet, 120),
+        "source_row": source_row or line_number,
+        "source_category": _truncate(source_intelligence["collation"].get("area"), 80),
+        "source_subcategory": _truncate(source_intelligence["collation"].get("responsible_team"), 120),
+        "source_payload": source_payload,
+        "source_formulas": source_formulas,
+        "source_intelligence": source_intelligence,
     }

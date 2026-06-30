@@ -4,6 +4,42 @@ Assessment date: 2026-06-30
 
 Repository: `F:\code\SCADA-Obsolescence-App`
 
+## Current addendum: live workbook import
+
+Later on 2026-06-30, the repository was converted to a Git repository and extended to support
+the supplied full TPCMS workbook:
+
+```text
+data/442075 TPCMS Obsolescence Register LIVE.xlsx
+```
+
+Current implementation additions:
+
+- TPCMS `.xlsx` import from the `Obsolescence Register` sheet.
+- Structured source retention on each imported asset: workbook name, sheet, row, source
+  payload, workbook formulas, source category, source subcategory and source intelligence.
+- Source filters for source area and responsible team.
+- `/api/dashboard/source-summary` for source workbook collation, formula columns, source
+  totals and automation flags.
+- `/api/assets/source-export.csv` for original source columns plus platform-calculated
+  `platform_` fields.
+- ADR: `docs/adr/ADR-2026-06-30-workbook-source-retention.md`.
+
+Current validation evidence:
+
+- API regression tests: 11 passed.
+- Compile check: `python -m compileall app tests` passed.
+- Alembic upgrade and `alembic check` passed against a fresh temporary SQLite database.
+- Browser JavaScript parse check passed.
+- Clean local workbook import with `SEED_DEMO=false`: 344 rows received, 344 created, 0
+  failed.
+- Repeat workbook import: 344 rows received, 0 created, 344 updated, 0 failed.
+- Source summary after import: 344 source records, 9 formula columns, 8,005 quantity in
+  field, and 17,463,620.00 source total estimate.
+- Parsed source export: 344 rows, 57 columns.
+- Parsed normalized export: 344 rows, 30 columns.
+- Workbook SHA256 hash and modification timestamp were unchanged by import.
+
 Assessment scope:
 
 - Familiarise with the solution and source material.

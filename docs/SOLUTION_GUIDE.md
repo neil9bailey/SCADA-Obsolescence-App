@@ -4,8 +4,9 @@ This guide explains how to understand, run, operate, test, and extend the SCADA 
 Command Centre MVP.
 
 The application turns a static SCADA obsolescence register into a live lifecycle portfolio.
-It stores assets, risk evidence, intervention packages, budgets, dependencies, audit events,
-and CSV exchange history in a relational database behind a FastAPI service and a browser UI.
+It stores assets, source workbook evidence, risk evidence, intervention packages, budgets,
+dependencies, audit events, and import/export history in a relational database behind a
+FastAPI service and a browser UI.
 
 ## 1. What the solution does
 
@@ -15,7 +16,8 @@ Use this application to:
 - Calculate a 0-100 obsolescence and resilience risk score for every asset.
 - Group related assets into programme packages with budgets, dependencies, waves, and gates.
 - Track evidence quality, owner gaps, lifecycle gaps, and unassigned assets.
-- Import a controlled CSV register and export the current live register.
+- Import the live TPCMS workbook or a controlled CSV register and export either the
+  normalized live register or source workbook fields.
 - Review audit events for create, update, delete, import, and seed actions.
 - Demonstrate a fictional portfolio without connecting to real production OT systems.
 
@@ -34,15 +36,16 @@ approved integration path.
 | `app/schemas.py` | Pydantic request and response models |
 | `app/services/risk.py` | Risk scoring, risk band, recommended wave, completeness calculation |
 | `app/services/audit.py` | Audit event helper |
-| `app/routers/assets.py` | Asset CRUD, filters, CSV import, CSV export, facets |
+| `app/routers/assets.py` | Asset CRUD, filters, workbook/CSV import, normalized/source export, facets |
 | `app/routers/programmes.py` | Programme package CRUD and rollups |
-| `app/routers/dashboard.py` | Portfolio summary, distributions, quality indicators, activity |
+| `app/routers/dashboard.py` | Portfolio summary, source summary, distributions, quality indicators, activity |
 | `app/routers/health.py` | Database reachability check |
 | `app/static/` | Dependency-free browser SPA |
 | `migrations/` | Alembic migration environment and initial schema |
 | `tests/` | FastAPI API regression tests |
 | `data/sample-import.csv` | Example CSV import template |
 | `docs/DATA_DICTIONARY.md` | Field-level data dictionary and import rules |
+| `docs/LIVE_REGISTER_MAPPING.md` | TPCMS workbook mapping, source retention and clean import evidence |
 | `Dockerfile` | Production-style Python image for the FastAPI app |
 | `docker-compose.yml` | App plus PostgreSQL deployment for evaluation |
 | `.env.example` | Local configuration template |
@@ -70,6 +73,14 @@ The backend owns calculated fields:
 
 Do not import or manually edit calculated values. They are regenerated when an asset is
 created, updated, or imported.
+
+For TPCMS workbook imports, each asset can also carry source-retention metadata:
+
+- original workbook name, sheet and row number
+- original workbook column values in `source_payload`
+- workbook formula text in `source_formulas`
+- source area/team category fields for filtering
+- source intelligence for collation, automation flags and reporting
 
 ### Programme packages
 
@@ -294,14 +305,44 @@ deleting the assets.
 
 Use the data exchange page to:
 
-- download the current register as CSV
+- download the current normalized register as CSV
+- download source workbook fields with platform-calculated intelligence as CSV
 - download or inspect the sample template
-- import a UTF-8 CSV
+- import the TPCMS workbook `.xlsx` or a UTF-8 CSV
 - review row-level import results
 
-CSV import uses `asset_code` for upsert. Valid rows can be imported even if another row fails.
+Platform CSV import uses `asset_code` for upsert. TPCMS workbook import generates stable
+TPCMS asset codes from the source identity columns and updates those same records on repeat
+import. Valid rows can be imported even if another row fails.
 
-## 9. CSV import guide
+## 9. Workbook and CSV import guide
+
+### TPCMS workbook import
+
+The supported workbook path is:
+
+```text
+data/442075 TPCMS Obsolescence Register LIVE.xlsx
+```
+
+The importer reads the `Obsolescence Register` sheet, preserves all source columns in
+structured metadata, stores workbook formulas as source evidence, recalculates platform risk
+and delivery-wave fields, and leaves programme package assignment to a later human-approved
+packaging rule.
+
+Recommended controlled-import sequence:
+
+1. Start with `SEED_DEMO=false` when importing the real live workbook.
+2. Import the `.xlsx` through Data exchange or `/api/assets/import`.
+3. Review created, updated, failed, and row-error counts.
+4. Check the source workbook intelligence panel and source area/team filters.
+5. Export `/api/assets/source-export.csv` when the customer needs the familiar source-column
+   view with platform-calculated fields.
+6. Export `/api/assets/export.csv` when a platform-native register is required.
+
+See `docs/LIVE_REGISTER_MAPPING.md` for the full source-column mapping.
+
+### Platform CSV import
 
 Minimum columns for a new record:
 
@@ -309,7 +350,7 @@ Minimum columns for a new record:
 asset_code,system_name,site
 ```
 
-Recommended controlled-import sequence:
+Recommended platform CSV import sequence:
 
 1. Export or prepare a register outside the app.
 2. Align column names with `docs/DATA_DICTIONARY.md`.
@@ -410,11 +451,32 @@ Invoke-WebRequest `
   -OutFile .\exported-scada-register.csv
 ```
 
+Export source workbook fields:
+
+```powershell
+Invoke-WebRequest `
+  -Uri http://127.0.0.1:8000/api/assets/source-export.csv `
+  -OutFile .\exported-tpcms-source-register.csv
+```
+
 Import CSV:
 
 ```powershell
 $form = @{
   file = Get-Item .\data\sample-import.csv
+}
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/api/assets/import `
+  -Form $form
+```
+
+Import TPCMS workbook:
+
+```powershell
+$form = @{
+  file = Get-Item ".\data\442075 TPCMS Obsolescence Register LIVE.xlsx"
 }
 
 Invoke-RestMethod `
@@ -575,7 +637,7 @@ Keep these boundaries intact unless an architecture decision approves a change:
 - The browser has no direct OT or database connectivity.
 - Risk scoring lives in `app/services/risk.py`.
 - Calculated fields are backend-owned.
-- CSV import is controlled, validated, and row-isolated.
+- Workbook and CSV import is controlled, validated, and row-isolated.
 - Alembic owns controlled schema evolution for non-local deployments.
 
 Likely next increments:

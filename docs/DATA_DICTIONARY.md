@@ -32,6 +32,22 @@
 | `programme_id` | Optional foreign key | Link to a programme package through the API |
 | `programme_code` | Optional CSV field | Human-friendly package link used during import and export |
 
+## TPCMS source-retention fields
+
+These fields are populated when a live TPCMS workbook or recognised live-register CSV is
+imported. They are read-only evidence fields exposed by the API and source export.
+
+| Field | Type / rule | Purpose |
+|---|---|---|
+| `source_workbook` | Optional string | Imported workbook or CSV filename |
+| `source_sheet` | Optional string | Workbook sheet name, normally `Obsolescence Register`, or `CSV` for legacy CSV imports |
+| `source_row` | Optional integer | Source row number used for traceability back to the register |
+| `source_category` | Optional indexed string | High-value source grouping, currently mapped from `Area` |
+| `source_subcategory` | Optional indexed string | High-value source grouping, currently mapped from `Responsible Team` |
+| `source_payload` | JSON object | Original source register columns and cached cell values preserved as imported |
+| `source_formulas` | JSON object | Formula text from workbook cells, keyed by source column |
+| `source_intelligence` | JSON object | Derived source risk, collation and automation signals |
+
 ## Computed asset fields
 
 These fields are owned by the backend and are recalculated whenever an assessment changes. Imported values are ignored.
@@ -70,11 +86,22 @@ The API derives `asset_count`, `critical_assets`, `average_risk` and `total_budg
 ## Import behavior
 
 - New rows require `asset_code`, `system_name` and `site`.
-- The TPCMS live obsolescence-register format is also recognised and mapped before
-  validation. See `docs/LIVE_REGISTER_MAPPING.md`.
+- TPCMS `.xlsx` workbooks are recognised when they contain an `Obsolescence Register`
+  sheet with the required live-register columns.
+- The legacy TPCMS live obsolescence-register CSV format is also recognised and mapped
+  before validation. See `docs/LIVE_REGISTER_MAPPING.md`.
 - Existing records are matched by exact `asset_code` and updated.
 - Empty optional CSV cells do not overwrite existing values.
 - `programme_code` must already exist in the programme table.
 - Ratings outside 1–5 are rejected for that row.
 - A failed row is isolated by a database savepoint; valid rows remain importable.
 - At most 25 detailed row errors are returned in one response.
+
+## Source reporting and export
+
+- `/api/dashboard/source-summary` reports source workbook counts, source categories,
+  responsible teams, source risk factors, status values, hardware/software groups,
+  automation flags, formula columns, source total estimate and quantity in field.
+- `/api/assets/source-export.csv` exports one row per retained source record. It includes
+  platform-calculated fields prefixed with `platform_` followed by the original source
+  register columns.

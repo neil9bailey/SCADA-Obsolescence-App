@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -137,6 +137,14 @@ class AssetRead(AssetBase):
     risk_band: RiskBand
     recommended_wave: str
     data_completeness: int
+    source_workbook: str | None = None
+    source_sheet: str | None = None
+    source_row: int | None = None
+    source_category: str | None = None
+    source_subcategory: str | None = None
+    source_payload: dict[str, Any] | None = None
+    source_formulas: dict[str, Any] | None = None
+    source_intelligence: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
 
