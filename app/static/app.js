@@ -14,6 +14,7 @@ const state = {
   facets: null,
   programmes: null,
   pendingImportFile: null,
+  assetTableMode: 'source',
   assets: {
     offset: 0,
     limit: 20,
@@ -29,6 +30,51 @@ const state = {
     sort_dir: 'desc',
   },
 };
+
+const SOURCE_REGISTER_COLUMNS = [
+  'Last Obsolescence Check or Update',
+  'Component Part',
+  'Component',
+  'Component Description',
+  'Manufacturer',
+  'Supplier',
+  'Responsible Team',
+  'Area',
+  'Hardware/Software',
+  'Functional / Non-Functional',
+  'Obsolete (Y/N)',
+  'Obsolete Date',
+  'Last Buy',
+  'End of Support',
+  'Cost Hit (EOS - 1 Year)',
+  'Obsolescence Management Strategy',
+  'Status',
+  'Qty in Field',
+  'NR Spares Oty (Battle Boxes)',
+  'Telent Spares Qty',
+  'Recommend No of Spares',
+  'Future Installation Qty',
+  'Spares Strategy',
+  'Unit Cost (est)',
+  'Cost (of Total Devices in Field)',
+  'Estimated Procurement Lead Time (Days)',
+  'Estimated Labour Cost',
+  'Total Estimated Cost (Component + Labour)',
+  'PA Subsystem Cert Reference',
+  'PA (Product Specific) Certificate Reference',
+  'Full upgrade or ad-hoc replacement?',
+  'System Criticality',
+  'Obsolescence Criticality',
+  'Cost Criticality',
+  'Ctriticality Rating',
+  'Replacement identified (Y/N)',
+  'Replacement',
+  'Supporting Notes',
+  'Risk Score',
+  'Risk Factor',
+  'Reason for Risk',
+  'Risk Assessment',
+];
 
 const pageMeta = {
   dashboard: ['Portfolio dashboard', 'Portfolio intelligence'],
@@ -78,6 +124,23 @@ function formatMoney(value, compact = true) {
 
 function badge(value) {
   return `<span class="badge ${classToken(value)}">${esc(label(value))}</span>`;
+}
+
+function sourceCellValue(asset, column) {
+  const payload = asset.source_payload || {};
+  const value = payload[column];
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+  const text = String(value);
+  const isoDate = text.match(/^(\d{4}-\d{2}-\d{2})T00:00:00$/);
+  return isoDate ? isoDate[1] : text;
+}
+
+function renderSourceRegisterRows(items) {
+  return items.map((asset) => {
+    const cells = SOURCE_REGISTER_COLUMNS.map((column) => `<td>${esc(sourceCellValue(asset, column))}</td>`).join('');
+    return `<tr class="clickable" data-action="edit-asset" data-id="${asset.id}">${cells}</tr>`;
+  }).join('');
 }
 
 function score(scoreValue, band) {
@@ -269,8 +332,10 @@ async function renderAssets() {
   const pMap = new Map(facets.programmes.map((item) => [String(item.id), item.package_code]));
   const start = data.total ? data.offset + 1 : 0;
   const end = Math.min(data.offset + data.limit, data.total);
+  const hasSourceRecords = Boolean((facets.source_categories || []).length || data.items.some((asset) => asset.source_payload));
+  const tableMode = hasSourceRecords ? state.assetTableMode : 'platform';
 
-  const rows = data.items.map((asset) => `<tr class="clickable" data-action="edit-asset" data-id="${asset.id}">
+  const platformRows = data.items.map((asset) => `<tr class="clickable" data-action="edit-asset" data-id="${asset.id}">
     <td><span class="code">${esc(asset.asset_code)}</span><span class="cell-secondary">${esc(asset.asset_type)}</span></td>
     <td><span class="cell-primary">${esc(asset.system_name)}</span><span class="cell-secondary">${esc(asset.manufacturer || 'Manufacturer not captured')} ${esc(asset.model || '')}</span></td>
     <td><span class="cell-primary">${esc(asset.site)}</span><span class="cell-secondary">${esc(asset.process_area || 'Area not captured')}</span></td>
@@ -280,17 +345,30 @@ async function renderAssets() {
     <td><span class="cell-primary">${esc(pMap.get(String(asset.programme_id)) || 'Unassigned')}</span><span class="cell-secondary">${esc(asset.owner || 'No owner')}</span></td>
   </tr>`).join('');
 
-  const body = rows || `<tr><td colspan="7"><div class="empty-state"><div class="empty-symbol">⌕</div><div><strong>No records match</strong>Adjust the filters or create a new asset.</div></div></td></tr>`;
+  const sourceRows = renderSourceRegisterRows(data.items);
+  const sourceHead = SOURCE_REGISTER_COLUMNS.map((column) => `<th>${esc(column)}</th>`).join('');
+  const platformBody = platformRows || `<tr><td colspan="7"><div class="empty-state"><div class="empty-symbol">⌕</div><div><strong>No records match</strong>Adjust the filters or create a new asset.</div></div></td></tr>`;
+  const sourceBody = sourceRows || `<tr><td colspan="${SOURCE_REGISTER_COLUMNS.length}"><div class="empty-state"><div class="empty-symbol">⌕</div><div><strong>No records match</strong>Adjust the filters or import a source workbook.</div></div></td></tr>`;
+  const tableHtml = tableMode === 'source'
+    ? `<table class="data-table source-register-table"><thead><tr>${sourceHead}</tr></thead><tbody>${sourceBody}</tbody></table>`
+    : `<table class="data-table"><thead><tr><th>Asset</th><th>System</th><th>Location</th><th>Lifecycle</th><th>Risk</th><th>Response</th><th>Package / owner</th></tr></thead><tbody>${platformBody}</tbody></table>`;
+  const sourceExport = hasSourceRecords ? '<a class="button secondary" href="/api/assets/source-export.csv">⇩ Export source fields</a>' : '';
+  const modeSwitch = hasSourceRecords ? `
+      <div class="table-mode" aria-label="Asset table mode">
+        <button class="${tableMode === 'source' ? 'active' : ''}" type="button" data-action="asset-view-source">Source register</button>
+        <button class="${tableMode === 'platform' ? 'active' : ''}" type="button" data-action="asset-view-platform">Risk view</button>
+      </div>` : '';
   const hasPrev = state.assets.offset > 0;
   const hasNext = state.assets.offset + state.assets.limit < data.total;
 
   viewEl.innerHTML = `
     <div class="page-intro">
-      <div><h2>Validated system and asset baseline</h2><p>Search, filter and update the live register. Every change recalculates exposure, recommended wave and data completeness.</p></div>
-      <div class="page-actions"><a class="button secondary" href="/api/assets/export.csv">⇩ Export CSV</a><button class="button primary" data-action="new-asset">＋ Add asset</button></div>
+      <div><h2>${tableMode === 'source' ? 'Imported TPCMS source register' : 'Validated system and asset baseline'}</h2><p>${tableMode === 'source' ? 'Search and filter the retained workbook columns in the same language as the imported register.' : 'Search, filter and update the normalized live register. Every change recalculates exposure, recommended wave and data completeness.'}</p></div>
+      <div class="page-actions">${sourceExport}<a class="button secondary" href="/api/assets/export.csv">⇩ Export current register</a><button class="button primary" data-action="new-asset">＋ Add asset</button></div>
     </div>
     <form class="toolbar" id="asset-filters">
       <label class="toolbar-search"><span>⌕</span><input type="search" name="q" value="${esc(state.assets.q)}" placeholder="Asset code, system, vendor or owner"></label>
+      ${modeSwitch}
       <select class="select" name="site" data-filter>${options(facets.sites, state.assets.site, 'All sites')}</select>
       <select class="select" name="support_status" data-filter>${options(facets.support_statuses, state.assets.support_status, 'All lifecycle states')}</select>
       <select class="select" name="risk_band" data-filter>${options(facets.risk_bands, state.assets.risk_band, 'All risk bands')}</select>
@@ -303,8 +381,8 @@ async function renderAssets() {
       <button class="button secondary small" type="button" data-action="clear-asset-filters">Clear</button>
     </form>
     <article class="panel">
-      <div class="panel-body flush"><div class="data-table-wrap"><table class="data-table"><thead><tr><th>Asset</th><th>System</th><th>Location</th><th>Lifecycle</th><th>Risk</th><th>Response</th><th>Package / owner</th></tr></thead><tbody>${body}</tbody></table></div></div>
-      <div class="table-meta"><span>Showing ${start}–${end} of ${data.total} live records</span><div class="pagination"><button class="button secondary small" data-action="asset-prev" ${hasPrev ? '' : 'disabled'}>← Previous</button><button class="button secondary small" data-action="asset-next" ${hasNext ? '' : 'disabled'}>Next →</button></div></div>
+      <div class="panel-body flush"><div class="data-table-wrap">${tableHtml}</div></div>
+      <div class="table-meta"><span>Showing ${start}–${end} of ${data.total} live records · ${tableMode === 'source' ? 'source workbook columns' : 'platform risk view'}</span><div class="pagination"><button class="button secondary small" data-action="asset-prev" ${hasPrev ? '' : 'disabled'}>← Previous</button><button class="button secondary small" data-action="asset-next" ${hasNext ? '' : 'disabled'}>Next →</button></div></div>
     </article>`;
 }
 
@@ -569,6 +647,14 @@ document.addEventListener('click', async (event) => {
     if (action === 'refresh-dashboard' || action === 'retry-view') await renderCurrent();
     if (action === 'new-asset') await openAssetModal();
     if (action === 'edit-asset') await openAssetModal(Number(target.dataset.id));
+    if (action === 'asset-view-source') {
+      state.assetTableMode = 'source';
+      await renderAssets();
+    }
+    if (action === 'asset-view-platform') {
+      state.assetTableMode = 'platform';
+      await renderAssets();
+    }
     if (action === 'new-programme') await openProgrammeModal();
     if (action === 'edit-programme') await openProgrammeModal(Number(target.dataset.id));
     if (action === 'close-modal') closeModal();
