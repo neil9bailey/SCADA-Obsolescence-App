@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas import SourceColumnDefinition
+from app.schemas_live import SourceColumnDefinition
 
 SOURCE_COLUMN_GROUPS: list[tuple[str, str, str, str, bool, bool]] = [
     ("Last Obsolescence Check or Update", "Lifecycle", "date", "Last Obsolescence Check or Update", True, False),
