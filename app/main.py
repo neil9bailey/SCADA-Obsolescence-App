@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import API_PREFIX, APP_NAME, AUTO_CREATE_SCHEMA, SEED_DEMO
 from app.db import SessionLocal, init_db
-from app.routers import assets, dashboard, health, operations, programmes
+from app.routers import assets, assets_controls, dashboard, evidence, health, import_preview, operations, programmes
 from app.seed import seed_demo_data
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -28,7 +28,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title=APP_NAME,
-    version="0.1.0",
+    version="0.2.0",
     description="Dynamic SCADA obsolescence portfolio and programme management MVP.",
     docs_url=f"{API_PREFIX}/docs",
     redoc_url=None,
@@ -52,8 +52,11 @@ async def security_headers(request: Request, call_next):
 
 app.include_router(health.router, prefix=API_PREFIX)
 app.include_router(dashboard.router, prefix=API_PREFIX)
+app.include_router(assets_controls.router, prefix=API_PREFIX)
+app.include_router(import_preview.router, prefix=API_PREFIX)
 app.include_router(assets.router, prefix=API_PREFIX)
 app.include_router(programmes.router, prefix=API_PREFIX)
+app.include_router(evidence.router, prefix=API_PREFIX)
 app.include_router(operations.router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
